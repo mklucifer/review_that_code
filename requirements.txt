@@ -1,0 +1,5 @@
+python-magic==0.4.27
+PyYAML==6.0.1
+jsonschema==4.19.0
+requests==2.31.0
+beautifulsoup4==4.12.2
