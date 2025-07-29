@@ -4,7 +4,7 @@
 
 ## Overview
 
-`review_that_code` is a professional vulnerability scanner that analyzes source code for security weaknesses across all programming languages and application types. It identifies vulnerabilities based on OWASP Top 10 2021 standards, provides detailed contextual explanations for each finding, and generates comprehensive security assessment reports with CVSSv3.1 scoring suitable for penetration testing and security audits.
+`review_that_code` is a vulnerability scanner that analyses source code for security weaknesses across all programming languages and application types. It identifies vulnerabilities based on OWASP Top 10 2021 standards, provides detailed contextual explanations for each finding, and generates comprehensive security assessment reports with CVSSv3.1 scoring suitable for penetration testing and security audits.
 
 ## Security Checks
 
