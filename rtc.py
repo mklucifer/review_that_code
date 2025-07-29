@@ -108,7 +108,7 @@ class EnhancedOWASPScanner:
                 ],
                 'severity': 'Critical',
                 'title': 'Critical Security Issue - Hardcoded Secrets and Credentials',
-                'cvss_vector': {'AV': 'L', 'AC': 'L', 'PR': 'N', 'UI': 'N', 'S': 'C', 'C': 'H', 'I': 'H', 'A': 'H'},
+                'cvss_vector': {'AV': 'N', 'AC': 'L', 'PR': 'N', 'UI': 'N', 'S': 'C', 'C': 'H', 'I': 'H', 'A': 'H'},
                 'description': '''Hardcoded secrets in source code represent one of the most critical security vulnerabilities.
 
 IMPACT: Complete compromise of associated systems, unauthorized access to databases and APIs.
@@ -122,16 +122,26 @@ RECOMMENDATION: Store credentials in environment variables or dedicated secret m
                 'patterns': [
                     r'hashlib\.md5\s*\(',
                     r'hashlib\.sha1\s*\(',
-                    r'MD5\s*\(',
-                    r'SHA1\s*\(',
-                    r'DES\s*\(',
-                    r'RC4\s*\(',
-                    r'ECB\s*\(',
+                    r'\bMD5\s*\(',
+                    r'\bSHA1\s*\(',
+                    r'\bDES\s*\(',  # Word boundary to avoid matching method names
+                    r'\bRC4\s*\(',
+                    r'\bECB\s*\(',
                     r'ssl_verify\s*=\s*False',
                     r'verify\s*=\s*False',
                     r'TrustAllCertificates',
                     r'HostnameVerifier.*ALLOW_ALL',
                     r'Math\.random\s*\(',
+                    # More specific cryptographic library patterns
+                    r'Cipher\.getInstance\s*\(\s*["\']DES["\']',
+                    r'Cipher\.getInstance\s*\(\s*["\']RC4["\']',
+                    r'Cipher\.getInstance\s*\(\s*["\'].*ECB.*["\']',
+                    r'new\s+DESKeySpec\s*\(',
+                    r'new\s+RC4\s*\(',
+                    r'CryptoJS\.DES\.',
+                    r'CryptoJS\.RC4\.',
+                    r'from\s+Crypto\.Cipher\s+import\s+DES',
+                    r'from\s+Crypto\.Cipher\s+import\s+RC4',
                 ],
                 'severity': 'High',
                 'title': 'A02:2021 - Cryptographic Failures',
@@ -177,7 +187,7 @@ RECOMMENDATION: Use strong, up-to-date cryptographic algorithms, implement prope
                     r'child_process\.exec',
                     r'Runtime\.getRuntime\(\)\.exec',
                 ],
-                'severity': 'High',
+                'severity': 'Critical',
                 'title': 'A03:2021 - Injection Vulnerabilities',
                 'cvss_vector': {'AV': 'N', 'AC': 'L', 'PR': 'L', 'UI': 'N', 'S': 'C', 'C': 'H', 'I': 'H', 'A': 'H'},
                 'description': '''Injection flaws occur when untrusted data is sent to an interpreter as part of a command or query. Common injection types include SQL, NoSQL, OS command, LDAP injection, and Cross-Site Scripting (XSS).
@@ -202,13 +212,49 @@ RECOMMENDATION: Use parameterized queries, stored procedures, input validation, 
                 ],
                 'severity': 'Medium',
                 'title': 'A05:2021 - Security Misconfiguration',
-                'cvss_vector': {'AV': 'N', 'AC': 'L', 'PR': 'N', 'UI': 'N', 'S': 'U', 'C': 'L', 'I': 'N', 'A': 'N'},
+                'cvss_vector': {'AV': 'L', 'AC': 'L', 'PR': 'N', 'UI': 'N', 'S': 'U', 'C': 'L', 'I': 'N', 'A': 'N'},
                 'description': '''Security misconfiguration can happen at any level of an application stack, including network services, platform, web server, application server, database, frameworks, custom code, and pre-installed virtual machines, containers, or storage.
 
 IMPACT: Information disclosure, system compromise, unauthorized access to sensitive functionality.
 
 RECOMMENDATION: Implement secure installation processes, regular security updates, and proper configuration management.''',
                 'contextual_explanation': self._get_security_misconfiguration_explanation
+            },
+
+            # Container Security Issues
+            'container_security': {
+                'patterns': [
+                    r'^\s*ENTRYPOINT\s+(?!.*USER)',  # ENTRYPOINT without USER directive
+                    r'^\s*CMD\s+(?!.*USER)',         # CMD without USER directive
+                ],
+                'severity': 'High',
+                'title': 'Container Security - Missing User Directive',
+                'cvss_vector': {'AV': 'L', 'AC': 'L', 'PR': 'N', 'UI': 'N', 'S': 'C', 'C': 'H', 'I': 'H', 'A': 'H'},
+                'description': '''Running containers as root poses significant security risks. If an attacker compromises a process running as root, they may gain control over the entire container and potentially the host system.
+
+IMPACT: Container escape, privilege escalation, complete system compromise.
+
+RECOMMENDATION: Always specify a non-root USER directive in Dockerfiles before ENTRYPOINT or CMD instructions.''',
+                'contextual_explanation': self._get_container_security_explanation
+            },
+
+            # Cookie Security Issues
+            'cookie_security': {
+                'patterns': [
+                    r'new\s+Cookie\s*\([^)]*\)(?!.*\.setSecure\(true\))',
+                    r'new\s+Cookie\s*\([^)]*\)(?!.*\.setHttpOnly\(true\))',
+                    r'response\.addCookie\s*\([^)]*\)(?!.*setSecure)',
+                    r'response\.addCookie\s*\([^)]*\)(?!.*setHttpOnly)',
+                ],
+                'severity': 'Medium',
+                'title': 'A05:2021 - Insecure Cookie Configuration',
+                'cvss_vector': {'AV': 'N', 'AC': 'L', 'PR': 'N', 'UI': 'R', 'S': 'U', 'C': 'L', 'I': 'L', 'A': 'N'},
+                'description': '''Cookies without proper security flags are vulnerable to various attacks including session hijacking, cross-site scripting, and man-in-the-middle attacks.
+
+IMPACT: Session hijacking, credential theft, cross-site scripting attacks.
+
+RECOMMENDATION: Always set HttpOnly, Secure, and SameSite flags on cookies containing sensitive data.''',
+                'contextual_explanation': self._get_cookie_security_explanation
             }
         }
 
@@ -230,14 +276,30 @@ RECOMMENDATION: Implement secure installation processes, regular security update
 
     def _get_crypto_explanation(self, matched_text: str, line_content: str) -> str:
         """Provide contextual explanation for cryptographic vulnerabilities."""
+        # First, check for false positives - method names that contain crypto terms
+        false_positive_patterns = [
+            r'\w+des\w*\s*\(',  # Method names containing 'des' like getHecosCodes()
+            r'\w+md5\w*\s*\(',  # Method names containing 'md5'
+            r'\w+sha\w*\s*\(',  # Method names containing 'sha'
+            r'\w+rc4\w*\s*\(',  # Method names containing 'rc4'
+        ]
+        
+        for fp_pattern in false_positive_patterns:
+            if re.search(fp_pattern, matched_text, re.IGNORECASE):
+                # This looks like a method name, not actual crypto usage
+                return None  # Signal this is a false positive
+        
         explanations = {
-            'md5': "MD5 is cryptographically broken and vulnerable to collision attacks. Attackers can create different inputs that produce the same hash, allowing password bypasses or data integrity attacks.",
-            'sha1': "SHA-1 is deprecated due to collision vulnerabilities. Google demonstrated practical attacks in 2017, making it unsuitable for security purposes.",
-            'DES': "DES uses only 56-bit keys which can be brute-forced in hours with modern hardware. It's been broken since the late 1990s.",
-            'RC4': "RC4 has known biases in its keystream that allow attackers to recover plaintext, especially in protocols like WEP and early TLS.",
-            'ECB': "ECB mode encrypts identical plaintext blocks to identical ciphertext blocks, revealing patterns in the data and allowing partial decryption.",
-            'verify.*False': "Disabling SSL/TLS certificate verification allows man-in-the-middle attacks where attackers can intercept and modify communications.",
-            'Math.random': "Math.random() is not cryptographically secure and predictable, making it unsuitable for generating passwords, tokens, or keys."
+            'md5': "MD5 is cryptographically broken and vulnerable to collision attacks. Attackers can create two different inputs that produce the same MD5 hash in seconds, allowing them to bypass password verification, forge digital signatures, or replace legitimate files with malicious ones that have the same hash. This makes MD5 completely unsuitable for any security purpose.",
+            'sha1': "SHA-1 is deprecated due to collision vulnerabilities demonstrated by Google in 2017. Attackers can create different documents with identical SHA-1 hashes, allowing them to forge certificates, bypass integrity checks, or replace legitimate software with malicious versions. Modern attacks can find SHA-1 collisions in hours.",
+            'DES': "DES uses only 56-bit keys which can be brute-forced in hours with modern hardware or cloud computing. The Electronic Frontier Foundation cracked DES in 1998, and today's hardware can break it in minutes. Any data encrypted with DES can be easily decrypted by attackers, exposing sensitive information like passwords, personal data, or financial records.",
+            'RC4': "RC4 has known statistical biases in its keystream that allow attackers to recover plaintext without knowing the key. These weaknesses have been exploited in real-world attacks against WEP WiFi encryption and early TLS connections. Attackers can decrypt communications, steal session cookies, or recover encrypted passwords.",
+            'ECB': "ECB (Electronic Codebook) mode encrypts identical plaintext blocks to identical ciphertext blocks, revealing patterns in the encrypted data. Attackers can see repeated data patterns, rearrange encrypted blocks, or perform cut-and-paste attacks. This is why ECB mode makes encrypted images still show recognizable patterns.",
+            'verify.*False': "Disabling SSL/TLS certificate verification allows man-in-the-middle attacks where attackers can intercept, read, and modify all communications between the client and server. Attackers can steal login credentials, inject malicious content, or redirect users to malicious sites while appearing legitimate.",
+            'Math.random': "Math.random() uses a predictable pseudorandom number generator that attackers can predict if they know the seed or observe enough outputs. This makes it completely unsuitable for generating passwords, session tokens, cryptographic keys, or any security-sensitive random values. Attackers can predict future 'random' values and compromise security.",
+            'Cipher.getInstance': "Using weak cipher algorithms or insecure modes makes encrypted data vulnerable to various cryptographic attacks including brute force, known-plaintext attacks, or exploitation of algorithm weaknesses. Attackers can decrypt sensitive data, forge encrypted messages, or bypass authentication mechanisms.",
+            'CryptoJS': "Using deprecated or weak cryptographic algorithms in JavaScript can expose sensitive data to client-side attacks. Weak algorithms can be broken by attackers, and client-side crypto can be manipulated through browser developer tools or malicious scripts.",
+            'TrustAllCertificates': "Trusting all certificates bypasses SSL/TLS security entirely, allowing any attacker with a self-signed certificate to perform man-in-the-middle attacks. This completely negates the security benefits of HTTPS and allows attackers to intercept, read, and modify all encrypted communications."
         }
         
         for pattern, explanation in explanations.items():
@@ -267,17 +329,46 @@ RECOMMENDATION: Implement secure installation processes, regular security update
     def _get_security_misconfiguration_explanation(self, matched_text: str, line_content: str) -> str:
         """Provide contextual explanation for security misconfiguration vulnerabilities."""
         explanations = {
-            'DEBUG.*True': "Debug mode enabled in production exposes sensitive information like stack traces, variable values, and system internals to attackers.",
-            'console.log': "Console logging in production can expose sensitive data in browser developer tools or server logs that attackers might access.",
-            'printStackTrace': "Printing stack traces reveals internal application structure, file paths, and potentially sensitive data to attackers.",
-            'error_reporting.*E_ALL': "Full error reporting in production exposes system information and potential vulnerabilities to attackers."
+            'DEBUG.*True': "Debug mode enabled in production exposes sensitive information like stack traces, variable values, database queries, and system internals to attackers. This information can be used to understand the application's structure and find additional vulnerabilities.",
+            'console.log': "Console logging in production can expose sensitive data like user credentials, API keys, or personal information in browser developer tools or server logs. Attackers who gain access to logs or can view the browser console can steal this sensitive data.",
+            'printStackTrace': "Printing stack traces reveals internal application structure, file paths, class names, method signatures, and potentially sensitive data like database connection strings or API endpoints. Attackers use this information to map the application and identify attack vectors.",
+            'error_reporting.*E_ALL': "Full error reporting in production exposes detailed system information, file paths, database schemas, and internal application logic. This gives attackers a roadmap of the system's internals and potential vulnerabilities to exploit.",
+            'print\\s*\\(': "Print statements in production code can expose sensitive information like file paths, error details, user data, or system internals to logs or console output. Attackers who gain access to logs can use this information to understand the system and plan attacks. Additionally, excessive logging can cause performance issues and fill up disk space."
         }
         
         for pattern, explanation in explanations.items():
             if re.search(pattern, matched_text, re.IGNORECASE):
-                return f"WHY THIS IS VULNERABLE: {explanation} In this code: '{matched_text.strip()}' - {line_content.strip()}"
+                return f"WHY THIS IS VULNERABLE: {explanation} In this specific code: '{matched_text.strip()}' - {line_content.strip()}"
         
-        return f"WHY THIS IS VULNERABLE: This represents a security misconfiguration that exposes the application to attacks. The pattern '{matched_text.strip()}' in '{line_content.strip()}' should be secured."
+        return f"WHY THIS IS VULNERABLE: This represents a security misconfiguration that can expose sensitive system information to attackers. The pattern '{matched_text.strip()}' in '{line_content.strip()}' should be removed or secured with proper logging controls."
+
+    def _get_container_security_explanation(self, matched_text: str, line_content: str) -> str:
+        """Provide contextual explanation for container security vulnerabilities."""
+        explanations = {
+            'ENTRYPOINT': "By not specifying a USER directive before ENTRYPOINT, the container process runs as root (UID 0) with full administrative privileges. If an attacker exploits a vulnerability in the application (such as RCE, deserialization, or path traversal), they gain root access to the container. This allows them to: install malware, access sensitive files, modify system configurations, potentially escape the container to attack the host system, and pivot to other containers or network resources. Root access amplifies any security vulnerability into a critical system compromise.",
+            'CMD': "Running CMD instructions as root gives the container process unnecessary administrative privileges. If the application is compromised through vulnerabilities like SQL injection leading to RCE, buffer overflows, or insecure deserialization, attackers inherit root privileges. This enables them to: read/write any file in the container, install backdoors, modify system binaries, access other containers' data if volumes are shared, and potentially break out of container isolation to attack the host system."
+        }
+        
+        for pattern, explanation in explanations.items():
+            if re.search(pattern, matched_text, re.IGNORECASE):
+                return f"WHY THIS IS VULNERABLE: {explanation} In this specific code: '{matched_text.strip()}' - {line_content.strip()}"
+        
+        return f"WHY THIS IS VULNERABLE: This container configuration runs as root (UID 0), giving any compromised process full administrative privileges. The pattern '{matched_text.strip()}' in '{line_content.strip()}' should be preceded by a USER directive specifying a non-root user (e.g., USER 1000:1000) to limit the blast radius of any security compromise."
+
+    def _get_cookie_security_explanation(self, matched_text: str, line_content: str) -> str:
+        """Provide contextual explanation for cookie security vulnerabilities."""
+        explanations = {
+            'new.*Cookie.*(?!.*setSecure)': "Cookie created without the 'Secure' flag allows transmission over unencrypted HTTP connections. Attackers on the same network (WiFi, corporate network, or ISP level) can intercept these cookies using packet sniffing tools like Wireshark. Once stolen, attackers can use the session cookies to impersonate the user and gain unauthorized access to their account.",
+            'new.*Cookie.*(?!.*setHttpOnly)': "Cookie created without the 'HttpOnly' flag can be accessed by client-side JavaScript code. If the application is vulnerable to Cross-Site Scripting (XSS), malicious scripts can steal these cookies using document.cookie and send them to attacker-controlled servers. This allows session hijacking and account takeover attacks.",
+            'addCookie.*(?!.*setSecure)': "Cookie added without the 'Secure' flag can be transmitted over insecure HTTP connections. Network attackers can intercept these cookies through man-in-the-middle attacks, packet sniffing, or by downgrading HTTPS connections to HTTP. Stolen session cookies allow attackers to impersonate users and access their accounts.",
+            'addCookie.*(?!.*setHttpOnly)': "Cookie added without the 'HttpOnly' flag is accessible to JavaScript, making it vulnerable to XSS attacks. Malicious scripts injected through XSS can read these cookies and exfiltrate them to attacker servers. This enables session hijacking, where attackers can use stolen cookies to access user accounts without knowing passwords."
+        }
+        
+        for pattern, explanation in explanations.items():
+            if re.search(pattern, matched_text, re.IGNORECASE):
+                return f"WHY THIS IS VULNERABLE: {explanation} In this specific code: '{matched_text.strip()}' - {line_content.strip()}"
+        
+        return f"WHY THIS IS VULNERABLE: This cookie lacks proper security flags, making it vulnerable to interception and theft. The pattern '{matched_text.strip()}' in '{line_content.strip()}' should include HttpOnly (prevents JavaScript access) and Secure (prevents transmission over HTTP) flags to protect against session hijacking and XSS attacks."
 
     def _is_text_file(self, file_path: str) -> bool:
         """Check if a file is a text file that should be scanned."""
@@ -316,8 +407,21 @@ RECOMMENDATION: Implement secure installation processes, regular security update
                             # Get contextual explanation
                             contextual_explanation = vuln_data['contextual_explanation'](match.group(), line.strip())
                             
+                            # Skip if this is identified as a false positive
+                            if contextual_explanation is None:
+                                continue
+                            
+                            # Convert to relative path if base_directory is set
+                            relative_path = file_path
+                            if hasattr(self, 'base_directory') and self.base_directory:
+                                try:
+                                    relative_path = os.path.relpath(file_path, self.base_directory)
+                                except ValueError:
+                                    # If relative path calculation fails, use original path
+                                    relative_path = file_path
+                            
                             finding = {
-                                'file': file_path,
+                                'file': relative_path,
                                 'line': line_num,
                                 'matched_text': match.group(),
                                 'line_content': line.strip(),
@@ -338,6 +442,8 @@ RECOMMENDATION: Implement secure installation processes, regular security update
                        'build', 'dist', '.pytest_cache', '.mypy_cache', 'vendor'}
         
         scanned_files = 0
+        # Store the base directory for relative path calculation
+        self.base_directory = os.path.abspath(directory)
         
         for root, dirs, files in os.walk(directory):
             # Remove excluded directories
@@ -370,26 +476,26 @@ RECOMMENDATION: Implement secure installation processes, regular security update
             "=" * 17
         ])
         
-        # Calculate summary statistics
-        total_findings = sum(len(findings) for findings in self.findings.values())
+        # Calculate summary statistics - count categories, not instances
+        total_categories = len([vuln_type for vuln_type, findings in self.findings.items() if findings])
         affected_files = len(set(f['file'] for findings in self.findings.values() for f in findings))
         
-        # CVSS severity breakdown
+        # CVSS severity breakdown by categories (not instances)
         cvss_severity_counts = defaultdict(int)
-        for findings in self.findings.values():
-            for finding in findings:
-                cvss_severity_counts[finding['cvss_severity']] += 1
+        for vuln_type, findings in self.findings.items():
+            if findings:  # Only count if there are findings for this category
+                # Use the severity from the first finding in each category
+                cvss_severity_counts[findings[0]['cvss_severity']] += 1
         
         report_lines.extend([
-            f"Total Vulnerability Instances: {total_findings}",
-            f"Vulnerability Categories Found: {len(self.findings)}",
+            f"Vulnerability Categories Found: {total_categories}",
             f"Files Affected: {affected_files}",
             "",
-            "CVSSv3.1 Severity Distribution:",
-            f"- Critical: {cvss_severity_counts['Critical']} findings",
-            f"- High:     {cvss_severity_counts['High']} findings",
-            f"- Medium:   {cvss_severity_counts['Medium']} findings",
-            f"- Low:      {cvss_severity_counts['Low']} findings",
+            "CVSSv3.1 Severity Distribution (by category):",
+            f"- Critical: {cvss_severity_counts['Critical']} categories",
+            f"- High:     {cvss_severity_counts['High']} categories",
+            f"- Medium:   {cvss_severity_counts['Medium']} categories",
+            f"- Low:      {cvss_severity_counts['Low']} categories",
             "",
             "DETAILED VULNERABILITY FINDINGS WITH CVSS SCORING",
             "=" * 50,
