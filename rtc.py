@@ -407,15 +407,19 @@ RECOMMENDATION: Implement secure installation processes, regular security update
                 'patterns': [
                     r'^\s*ENTRYPOINT\s+(?!.*USER)',  # ENTRYPOINT without USER directive
                     r'^\s*CMD\s+(?!.*USER)',         # CMD without USER directive
+                    r'^\s*FROM\s+.*:latest\b',       # Using :latest tag
+                    r'^\s*RUN\s+.*\|\|\s*echo\s+".*cannot.*"',  # Ignoring package manager errors
+                    r'^\s*COPY\s+.*\.jar\s+/opt/',  # Copying JAR to /opt without USER
+                    r'^\s*VOLUME\s+//tmp',           # Incorrect volume syntax
                 ],
                 'severity': 'High',
-                'title': 'Container Security - Missing User Directive',
+                'title': 'Container Security Vulnerabilities',
                 'cvss_vector': {'AV': 'L', 'AC': 'L', 'PR': 'N', 'UI': 'N', 'S': 'C', 'C': 'H', 'I': 'H', 'A': 'H'},
-                'description': '''Running containers as root poses significant security risks. If an attacker compromises a process running as root, they may gain control over the entire container and potentially the host system.
+                'description': '''Multiple container security issues detected including missing user directives, insecure base image tags, and poor error handling.
 
-IMPACT: Container escape, privilege escalation, complete system compromise.
+IMPACT: Container escape, privilege escalation, supply chain attacks, system compromise.
 
-RECOMMENDATION: Always specify a non-root USER directive in Dockerfiles before ENTRYPOINT or CMD instructions.''',
+RECOMMENDATION: Use specific image tags, proper USER directives, handle package errors properly, and follow container security best practices.''',
                 'contextual_explanation': self._get_container_security_explanation
             },
 
@@ -916,14 +920,18 @@ RECOMMENDATION: Remove debug statements before production deployment, use proper
         """Provide contextual explanation for container security vulnerabilities."""
         explanations = {
             'ENTRYPOINT': "By not specifying a USER directive before ENTRYPOINT, the container process runs as root (UID 0) with full administrative privileges. If an attacker exploits a vulnerability in the application (such as RCE, deserialization, or path traversal), they gain root access to the container. This allows them to: install malware, access sensitive files, modify system configurations, potentially escape the container to attack the host system, and pivot to other containers or network resources. Root access amplifies any security vulnerability into a critical system compromise.",
-            'CMD': "Running CMD instructions as root gives the container process unnecessary administrative privileges. If the application is compromised through vulnerabilities like SQL injection leading to RCE, buffer overflows, or insecure deserialization, attackers inherit root privileges. This enables them to: read/write any file in the container, install backdoors, modify system binaries, access other containers' data if volumes are shared, and potentially break out of container isolation to attack the host system."
+            'CMD': "Running CMD instructions as root gives the container process unnecessary administrative privileges. If the application is compromised through vulnerabilities like SQL injection leading to RCE, buffer overflows, or insecure deserialization, attackers inherit root privileges. This enables them to: read/write any file in the container, install backdoors, modify system binaries, access other containers' data if volumes are shared, and potentially break out of container isolation to attack the host system.",
+            'FROM.*:latest': "Using the ':latest' tag creates unpredictable builds and potential security vulnerabilities. The 'latest' tag is a moving target that can introduce breaking changes, security vulnerabilities, or malicious code without warning. Attackers can compromise upstream images, and your application will automatically pull the compromised version. This creates supply chain attacks where malicious code is injected into your containers without your knowledge.",
+            'echo.*cannot': "Silencing package manager errors with '|| echo' statements masks critical security updates and dependency failures. When package installations fail, it often means security patches aren't being applied, leaving known vulnerabilities unpatched. Attackers can exploit these unpatched vulnerabilities to gain system access. The 'cannot fix/upgrade' messages indicate the container may be running with known security flaws.",
+            r'COPY.*\.jar.*\/opt': "Copying application files to system directories like /opt as root creates security risks. The application files inherit root ownership, and if the application is compromised, attackers can modify these files with root privileges. This enables persistent backdoors, malware installation, and system-wide compromise.",
+            r'VOLUME.*\/\/tmp': "Incorrect volume syntax '/tmp' (double slash) can cause unexpected behavior and potential security issues. Malformed volume declarations may not work as expected, potentially exposing sensitive data or creating unintended file system access patterns that attackers can exploit."
         }
         
         for pattern, explanation in explanations.items():
             if re.search(pattern, matched_text, re.IGNORECASE):
                 return f"WHY THIS IS VULNERABLE: {explanation} In this specific code: '{matched_text.strip()}' - {line_content.strip()}"
         
-        return f"WHY THIS IS VULNERABLE: This container configuration runs as root (UID 0), giving any compromised process full administrative privileges. The pattern '{matched_text.strip()}' in '{line_content.strip()}' should be preceded by a USER directive specifying a non-root user (e.g., USER 1000:1000) to limit the blast radius of any security compromise."
+        return f"WHY THIS IS VULNERABLE: This container configuration contains security issues that can be exploited by attackers. The pattern '{matched_text.strip()}' in '{line_content.strip()}' violates container security best practices and should be remediated to prevent potential system compromise."
 
     def _get_cookie_security_explanation(self, matched_text: str, line_content: str) -> str:
         """Provide contextual explanation for cookie security vulnerabilities with production/development context."""
@@ -1177,6 +1185,25 @@ RECOMMENDATION: Remove debug statements before production deployment, use proper
 
     def _is_text_file(self, file_path: str) -> bool:
         """Check if a file is a text file that should be scanned."""
+        filename = os.path.basename(file_path).lower()
+        
+        # Check for specific filenames (like Dockerfile, docker-compose files, etc.)
+        special_filenames = {
+            'dockerfile', 'dockerfile.dev', 'dockerfile.prod', 'dockerfile.test',
+            'docker-compose.yml', 'docker-compose.yaml', 'docker-compose.dev.yml',
+            'docker-compose.prod.yml', 'docker-compose.test.yml',
+            'makefile', 'rakefile', 'gemfile', 'requirements.txt', 'package.json',
+            'composer.json', 'cargo.toml', 'go.mod', 'pom.xml', 'build.gradle',
+            'setup.py', 'pyproject.toml', '.env', '.env.example', '.gitignore'
+        }
+        
+        if filename in special_filenames:
+            return True
+        
+        # Check for files that start with specific patterns
+        if filename.startswith('dockerfile.'):
+            return True
+            
         if magic:
             try:
                 file_type = magic.from_file(file_path, mime=True)
@@ -1650,16 +1677,141 @@ RECOMMENDATION: Remove debug statements before production deployment, use proper
                 f.write(report_content)
         
         return report_content
+
+    def check_maven_dependencies(self) -> List[Dict]:
+        """Check Maven dependencies for vulnerabilities using OWASP Dependency Check."""
+        maven_vulnerabilities = []
+        
+        # Find Maven projects (pom.xml files)
+        maven_projects = []
+        for dep in self.extracted_dependencies:
+            if dep['file'].endswith('pom.xml'):
+                project_dir = os.path.dirname(dep['file'])
+                if project_dir not in maven_projects:
+                    maven_projects.append(project_dir)
+        
+        if not maven_projects:
+            return maven_vulnerabilities
+        
+        print(f"\n🔍 Running Maven dependency vulnerability checks on {len(maven_projects)} project(s)...")
+        
+        for project_dir in maven_projects:
+            try:
+                # Check if Maven is available
+                result = subprocess.run(['mvn', '--version'], 
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode != 0:
+                    print(f"⚠️  Maven not found. Skipping Maven checks for {project_dir}")
+                    continue
+                
+                print(f"📦 Checking Maven project: {os.path.relpath(project_dir, self.base_directory)}")
+                
+                # Run OWASP Dependency Check
+                cmd = ['mvn', 'org.owasp:dependency-check-maven:check', 
+                      '-DfailBuildOnCVSS=0', '-DskipTests=true', '-q']
+                
+                result = subprocess.run(cmd, cwd=project_dir, 
+                                      capture_output=True, text=True, timeout=300)
+                
+                if result.returncode == 0:
+                    # Parse dependency-check-report.xml
+                    report_path = os.path.join(project_dir, 'target', 'dependency-check-report.xml')
+                    if os.path.exists(report_path):
+                        maven_vulns = self._parse_maven_report(report_path, project_dir)
+                        maven_vulnerabilities.extend(maven_vulns)
+                        print(f"✅ Maven check complete. Found {len(maven_vulns)} vulnerabilities.")
+                    else:
+                        print(f"⚠️  Maven dependency check completed but no report found.")
+                else:
+                    print(f"⚠️  Maven dependency check failed: {result.stderr.strip()[:100]}")
+                    
+            except subprocess.TimeoutExpired:
+                print(f"⚠️  Maven dependency check timed out for {project_dir}")
+            except FileNotFoundError:
+                print(f"⚠️  Maven not found. Please install Maven to use --maven-check option.")
+                break
+            except Exception as e:
+                print(f"⚠️  Error running Maven check: {str(e)[:100]}")
+        
+        return maven_vulnerabilities
     
-    def check_dependency_vulnerabilities(self):
+    def _parse_maven_report(self, report_path: str, project_dir: str) -> List[Dict]:
+        """Parse Maven OWASP Dependency Check XML report."""
+        vulnerabilities = []
+        
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(report_path)
+            root = tree.getroot()
+            
+            # Parse dependencies with vulnerabilities
+            for dependency in root.findall('.//dependency'):
+                dep_name = dependency.find('fileName')
+                if dep_name is not None:
+                    dep_name = dep_name.text
+                else:
+                    continue
+                
+                # Find vulnerabilities for this dependency
+                vulnerabilities_elem = dependency.find('vulnerabilities')
+                if vulnerabilities_elem is not None:
+                    for vuln in vulnerabilities_elem.findall('vulnerability'):
+                        cvss_score = 0.0
+                        cvss_elem = vuln.find('cvssV3/baseScore')
+                        if cvss_elem is not None:
+                            try:
+                                cvss_score = float(cvss_elem.text)
+                            except (ValueError, TypeError):
+                                cvss_score = 0.0
+                        
+                        vuln_data = {
+                            'dependency': {
+                                'name': dep_name,
+                                'version': 'detected by Maven',
+                                'file': os.path.join(project_dir, 'pom.xml'),
+                                'category': 'maven-dependency'
+                            },
+                            'vulnerability_id': vuln.find('name').text if vuln.find('name') is not None else 'Unknown',
+                            'summary': vuln.find('description').text if vuln.find('description') is not None else 'No description available',
+                            'details': vuln.find('description').text if vuln.find('description') is not None else 'No details available',
+                            'cvss_score': cvss_score,
+                            'severity': self._get_severity_from_score(cvss_score),
+                            'published': vuln.find('publishedDate').text if vuln.find('publishedDate') is not None else 'Unknown',
+                            'modified': vuln.find('updatedDate').text if vuln.find('updatedDate') is not None else 'Unknown',
+                            'aliases': [],
+                            'references': []
+                        }
+                        
+                        # Extract references
+                        references = vuln.find('references')
+                        if references is not None:
+                            for ref in references.findall('reference'):
+                                url = ref.find('url')
+                                if url is not None:
+                                    vuln_data['references'].append(url.text)
+                        
+                        vulnerabilities.append(vuln_data)
+        
+        except Exception as e:
+            print(f"⚠️  Error parsing Maven report: {str(e)[:100]}")
+        
+        return vulnerabilities
+
+    def check_dependency_vulnerabilities(self, use_maven=False):
         """Check extracted dependencies for known vulnerabilities."""
         if not self.extracted_dependencies:
             return
         
-        # Run vulnerability check
+        # Run OSV API vulnerability check
         self.dependency_vulnerabilities = self.dependency_checker.check_dependency_vulnerabilities(
             self.extracted_dependencies
         )
+        
+        # Optionally run Maven-based checks for Java projects
+        if use_maven:
+            maven_vulnerabilities = self.check_maven_dependencies()
+            if maven_vulnerabilities:
+                self.dependency_vulnerabilities.extend(maven_vulnerabilities)
         
         # Convert dependency vulnerabilities to findings format for integration
         if self.dependency_vulnerabilities:
@@ -1857,6 +2009,7 @@ def main():
     parser.add_argument('target', help='Target directory or file to scan')
     parser.add_argument('--output', '-o', help='Output file for the report')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    parser.add_argument('--maven-check', '-m', action='store_true', help='Run Maven dependency vulnerability checks for Java projects')
     
     args = parser.parse_args()
     
@@ -1871,7 +2024,7 @@ def main():
         scanner.scan_directory(args.target, args.verbose)
     
     # Check dependencies for vulnerabilities
-    scanner.check_dependency_vulnerabilities()
+    scanner.check_dependency_vulnerabilities(use_maven=args.maven_check)
     
     # Display findings grouped by severity
     scanner.display_findings_by_severity()
